@@ -57,9 +57,8 @@ require (
 	golang.org/x/text v0.32.0 // indirect
 )
 
-replace (
-	github.com/df-mc/dragonfly => github.com/lumineproxy/dragonfly v0.0.0-20260101232342-710c0a1931ba
-	github.com/df-mc/go-nethernet => github.com/lumineproxy/go-nethernet v0.0.0-20251201013730-45766a8ec674
-	github.com/sandertv/go-raknet => github.com/lumineproxy/go-raknet v0.0.0-20260102015805-b139417c724e
-	github.com/sandertv/gophertunnel => github.com/lumineproxy/gophertunnel v0.0.0-20260102091803-5fb43dd59e0c
-)
+replace github.com/sandertv/gophertunnel => ../gophertunnel
+
+replace github.com/df-mc/dragonfly => ../dragonfly
+
+replace github.com/sandertv/go-raknet => ../go-raknet
