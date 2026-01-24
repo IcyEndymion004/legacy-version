@@ -152,7 +152,6 @@ type Protocol struct {
 
 	blockTranslator BlockTranslator
 	itemTranslator  ItemTranslator
-	Items           []protocol.ItemEntry
 }
 
 func (p *Protocol) Ver() string {
@@ -191,10 +190,6 @@ func (p *Protocol) ConvertFromLatest(pk packet.Packet, conn *minecraft.Conn) []p
 }
 
 func (p *Protocol) downgradePackets(pks []packet.Packet, conn *minecraft.Conn) []packet.Packet {
-	translator, ok := p.blockTranslator.(*DefaultBlockTranslator)
-	if !ok {
-		return pks
-	}
 	for pkIndex, pk := range pks {
 		switch pk := pk.(type) {
 		case *packet.ClientCacheStatus:
@@ -419,7 +414,6 @@ func (p *Protocol) downgradePackets(pks []packet.Packet, conn *minecraft.Conn) [
 				DetachFromEntity: pk.DetachFromEntity,
 			}
 		case *packet.ChangeDimension:
-			translator.currentDimension = pk.Dimension
 			pks[pkIndex] = &legacypacket.ChangeDimension{
 				Dimension:       pk.Dimension,
 				Position:        pk.Position,
@@ -525,13 +519,12 @@ func (p *Protocol) downgradePackets(pks []packet.Packet, conn *minecraft.Conn) [
 				ClearRecipes:                 pk.ClearRecipes,
 			}
 		case *packet.StartGame:
-			translator.currentDimension = pk.Dimension
 			// Adjust game version
 			pk.GameVersion = p.ver
 			pk.BaseGameVersion = p.ver
 
-			items := make([]proto.LegacyItemRegistryEntry, len(p.Items))
-			for i, it := range p.Items {
+			items := make([]proto.LegacyItemRegistryEntry, len(conn.GameData().Items))
+			for i, it := range conn.GameData().Items {
 				items[i] = (&proto.LegacyItemRegistryEntry{}).FromLatest(it)
 			}
 
@@ -625,7 +618,6 @@ func (p *Protocol) downgradePackets(pks []packet.Packet, conn *minecraft.Conn) [
 				CodeStatus: pk.CodeStatus,
 			}
 		case *packet.ItemRegistry:
-			p.Items = pk.Items
 			items := make([]proto.ItemEntry, len(pk.Items))
 			for i, it := range pk.Items {
 				items[i] = (&proto.ItemEntry{}).FromLatest(it)
@@ -692,11 +684,16 @@ func (p *Protocol) downgradePackets(pks []packet.Packet, conn *minecraft.Conn) [
 			}
 		case *packet.CreativeContent:
 			items := make([]proto.CreativeItem, len(pk.Items))
+			groups := make([]protocol.CreativeGroup, len(pk.Groups))
 			for i, it := range pk.Items {
 				items[i] = (&proto.CreativeItem{}).FromLatest(it)
 			}
+			for i, gr := range pk.Groups {
+				gr.Icon = p.itemTranslator.DowngradeItemStack(gr.Icon)
+				groups[i] = gr
+			}
 			pks[pkIndex] = &legacypacket.CreativeContent{
-				Groups: pk.Groups,
+				Groups: groups,
 				Items:  items,
 			}
 		case *packet.UpdateAbilities:
