@@ -93,6 +93,12 @@ func (t *DefaultItemTranslator) DowngradeItemType(input protocol.ItemType) proto
 			i.Name = "minecraft:nether_star"
 		}
 
+		if strings.Contains(i.Name, "spear") {
+			return protocol.ItemType{
+				NetworkID: t.mapping.Air(),
+			}
+		}
+
 		networkID, ok = t.mapping.ItemNameToRuntimeID(i.Name)
 		if !ok {
 			networkID, _ = t.mapping.ItemNameToRuntimeID("minecraft:info_update")
