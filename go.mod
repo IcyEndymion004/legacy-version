@@ -35,5 +35,3 @@ require (
 replace github.com/sandertv/gophertunnel => ../gophertunnel
 
 replace github.com/df-mc/dragonfly => ../dragonfly
-
-replace github.com/sandertv/go-raknet => ../go-raknet

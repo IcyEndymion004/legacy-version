@@ -593,10 +593,10 @@ func (t *DefaultItemTranslator) DowngradeItemEntries(entries []proto.ItemEntry) 
 				panic(itemType)
 			}
 		} else {
-			if !strings.HasPrefix(entry.Name, "minecraft:") {
-				entry.Version = 0
-				entry.Data = map[string]any{}
-			}
+			/* if !strings.HasPrefix(entry.Name, "minecraft:") {
+			entry.Version = 0
+			entry.Data = map[string]any{}
+			} */
 			t.latest.RegisterEntryRID(entry.Name, int32(entry.RuntimeID), 2, nil)
 			entry.RuntimeID = int16(t.mapping.RegisterEntry(entry.Name))
 		}
