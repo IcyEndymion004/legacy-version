@@ -31,6 +31,8 @@ func init() {
 
 func convertPacketFunc(pid uint32, cur func() packet.Packet) func() packet.Packet {
 	switch pid {
+	case packet.IDDimensionData:
+		return func() packet.Packet { return &legacypacket.DimensionData{} }
 	case packet.IDCameraAimAssist:
 		return func() packet.Packet { return &legacypacket.CameraAimAssist{} }
 	case packet.IDCameraPresets:
@@ -89,6 +91,8 @@ func convertPacketFunc(pid uint32, cur func() packet.Packet) func() packet.Packe
 		return func() packet.Packet { return &legacypacket.ContainerClose{} }
 	case packet.IDText:
 		return func() packet.Packet { return &legacypacket.Text{} }
+	case packet.IDBookEdit:
+		return func() packet.Packet { return &legacypacket.BookEdit{} }
 	case packet.IDStartGame:
 		return func() packet.Packet { return &legacypacket.StartGame{} }
 	case packet.IDCodeBuilderSource:
@@ -152,6 +156,7 @@ type Protocol struct {
 
 	blockTranslator BlockTranslator
 	itemTranslator  ItemTranslator
+	Items           []protocol.ItemEntry
 }
 
 func (p *Protocol) Ver() string {
@@ -190,8 +195,14 @@ func (p *Protocol) ConvertFromLatest(pk packet.Packet, conn *minecraft.Conn) []p
 }
 
 func (p *Protocol) downgradePackets(pks []packet.Packet, conn *minecraft.Conn) []packet.Packet {
+	translator, ok := p.blockTranslator.(*DefaultBlockTranslator)
+	if !ok {
+		return pks
+	}
 	for pkIndex, pk := range pks {
 		switch pk := pk.(type) {
+		case *packet.DimensionData:
+			translator.dimensionDefinitions = pk.Definitions
 		case *packet.ClientCacheStatus:
 			// pk.Enabled = false // TODO: enable when chunk translation is not broken
 		case *packet.SetActorMotion:
@@ -402,6 +413,10 @@ func (p *Protocol) downgradePackets(pks []packet.Packet, conn *minecraft.Conn) [
 			if v, ok := pk.Set.Value(); ok {
 				iSet = protocol.Option((&proto.CameraInstructionSet{}).FromLatest(v))
 			}
+			var spline protocol.Optional[proto.CameraSplineInstruction]
+			if v, ok := pk.Spline.Value(); ok {
+				spline = protocol.Option((&proto.CameraSplineInstruction{}).FromLatest(v))
+			}
 			pks[pkIndex] = &legacypacket.CameraInstruction{
 				Set:              iSet,
 				Clear:            pk.Clear,
@@ -409,11 +424,12 @@ func (p *Protocol) downgradePackets(pks []packet.Packet, conn *minecraft.Conn) [
 				Target:           pk.Target,
 				RemoveTarget:     pk.RemoveTarget,
 				FieldOfView:      pk.FieldOfView,
-				Spline:           pk.Spline,
+				Spline:           spline,
 				AttachToEntity:   pk.AttachToEntity,
 				DetachFromEntity: pk.DetachFromEntity,
 			}
 		case *packet.ChangeDimension:
+			translator.currentDimension = pk.Dimension
 			pks[pkIndex] = &legacypacket.ChangeDimension{
 				Dimension:       pk.Dimension,
 				Position:        pk.Position,
@@ -500,6 +516,18 @@ func (p *Protocol) downgradePackets(pks []packet.Packet, conn *minecraft.Conn) [
 				PlatformChatID:   pk.PlatformChatID,
 				FilteredMessage:  pk.FilteredMessage,
 			}
+		case *packet.BookEdit:
+			pks[pkIndex] = &legacypacket.BookEdit{
+				InventorySlot:       pk.InventorySlot,
+				ActionType:          pk.ActionType,
+				PageNumber:          pk.PageNumber,
+				SecondaryPageNumber: pk.SecondaryPageNumber,
+				Text:                pk.Text,
+				PhotoName:           pk.PhotoName,
+				Title:               pk.Title,
+				Author:              pk.Author,
+				XUID:                pk.XUID,
+			}
 		case *packet.ContainerClose:
 			pks[pkIndex] = &legacypacket.ContainerClose{
 				WindowID:      pk.WindowID,
@@ -519,12 +547,13 @@ func (p *Protocol) downgradePackets(pks []packet.Packet, conn *minecraft.Conn) [
 				ClearRecipes:                 pk.ClearRecipes,
 			}
 		case *packet.StartGame:
+			translator.currentDimension = pk.Dimension
 			// Adjust game version
 			pk.GameVersion = p.ver
 			pk.BaseGameVersion = p.ver
 
-			items := make([]proto.LegacyItemRegistryEntry, len(conn.GameData().Items))
-			for i, it := range conn.GameData().Items {
+			items := make([]proto.LegacyItemRegistryEntry, len(p.Items))
+			for i, it := range p.Items {
 				items[i] = (&proto.LegacyItemRegistryEntry{}).FromLatest(it)
 			}
 			items = p.itemTranslator.DowngradeLegacyItemRegistry(items)
@@ -617,6 +646,7 @@ func (p *Protocol) downgradePackets(pks []packet.Packet, conn *minecraft.Conn) [
 				CodeStatus: pk.CodeStatus,
 			}
 		case *packet.ItemRegistry:
+			p.Items = pk.Items
 			items := make([]proto.ItemEntry, len(pk.Items))
 			for i, it := range pk.Items {
 				items[i] = (&proto.ItemEntry{}).FromLatest(it)
@@ -660,9 +690,17 @@ func (p *Protocol) downgradePackets(pks []packet.Packet, conn *minecraft.Conn) [
 				Overlay:              pk.Overlay,
 			}
 		case *packet.CameraAimAssistPresets:
+			categories := make([]proto.CameraAimAssistCategory, len(pk.Categories))
+			for i, c := range pk.Categories {
+				categories[i] = (&proto.CameraAimAssistCategory{}).FromLatest(c)
+			}
+			presets := make([]proto.CameraAimAssistPreset, len(pk.Presets))
+			for i, p := range pk.Presets {
+				presets[i] = (&proto.CameraAimAssistPreset{}).FromLatest(p)
+			}
 			pks[pkIndex] = &legacypacket.CameraAimAssistPresets{
-				Categories: pk.Categories,
-				Presets:    pk.Presets,
+				Categories: categories,
+				Presets:    presets,
 				Operation:  pk.Operation,
 			}
 		case *packet.CommandBlockUpdate:
@@ -683,16 +721,11 @@ func (p *Protocol) downgradePackets(pks []packet.Packet, conn *minecraft.Conn) [
 			}
 		case *packet.CreativeContent:
 			items := make([]proto.CreativeItem, len(pk.Items))
-			groups := make([]protocol.CreativeGroup, len(pk.Groups))
 			for i, it := range pk.Items {
 				items[i] = (&proto.CreativeItem{}).FromLatest(it)
 			}
-			for i, gr := range pk.Groups {
-				gr.Icon = p.itemTranslator.DowngradeItemStack(gr.Icon)
-				groups[i] = gr
-			}
 			pks[pkIndex] = &legacypacket.CreativeContent{
-				Groups: groups,
+				Groups: pk.Groups,
 				Items:  items,
 			}
 		case *packet.UpdateAbilities:
@@ -1042,6 +1075,10 @@ func (p *Protocol) upgradePackets(pks []packet.Packet, conn *minecraft.Conn) []p
 			if v, ok := pk.Set.Value(); ok {
 				iSet = protocol.Option(v.ToLatest())
 			}
+			var spline protocol.Optional[protocol.CameraSplineInstruction]
+			if v, ok := pk.Spline.Value(); ok {
+				spline = protocol.Option(v.ToLatest())
+			}
 			pks[pkIndex] = &packet.CameraInstruction{
 				Set:              iSet,
 				Clear:            pk.Clear,
@@ -1049,7 +1086,7 @@ func (p *Protocol) upgradePackets(pks []packet.Packet, conn *minecraft.Conn) []p
 				Target:           pk.Target,
 				RemoveTarget:     pk.RemoveTarget,
 				FieldOfView:      pk.FieldOfView,
-				Spline:           pk.Spline,
+				Spline:           spline,
 				AttachToEntity:   pk.AttachToEntity,
 				DetachFromEntity: pk.DetachFromEntity,
 			}
@@ -1158,6 +1195,18 @@ func (p *Protocol) upgradePackets(pks []packet.Packet, conn *minecraft.Conn) []p
 				PlatformChatID:   pk.PlatformChatID,
 				FilteredMessage:  pk.FilteredMessage,
 			}
+		case *legacypacket.BookEdit:
+			pks[pkIndex] = &packet.BookEdit{
+				InventorySlot:       pk.InventorySlot,
+				ActionType:          pk.ActionType,
+				PageNumber:          pk.PageNumber,
+				SecondaryPageNumber: pk.SecondaryPageNumber,
+				Text:                pk.Text,
+				PhotoName:           pk.PhotoName,
+				Title:               pk.Title,
+				Author:              pk.Author,
+				XUID:                pk.XUID,
+			}
 		case *legacypacket.StartGame:
 			pks[pkIndex] = &packet.StartGame{
 				EntityUniqueID:                 pk.EntityUniqueID,
@@ -1256,6 +1305,20 @@ func (p *Protocol) upgradePackets(pks []packet.Packet, conn *minecraft.Conn) []p
 				ScreenDarkening:      pk.ScreenDarkening,
 				Colour:               pk.Colour,
 				Overlay:              pk.Overlay,
+			}
+		case *legacypacket.CameraAimAssistPresets:
+			categories := make([]protocol.CameraAimAssistCategory, len(pk.Categories))
+			for i, c := range pk.Categories {
+				categories[i] = c.ToLatest()
+			}
+			presets := make([]protocol.CameraAimAssistPreset, len(pk.Presets))
+			for i, p := range pk.Presets {
+				presets[i] = p.ToLatest()
+			}
+			pks[pkIndex] = &packet.CameraAimAssistPresets{
+				Categories: categories,
+				Presets:    presets,
+				Operation:  pk.Operation,
 			}
 		case *legacypacket.CommandBlockUpdate:
 			pks[pkIndex] = &packet.CommandBlockUpdate{
